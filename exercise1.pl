@@ -74,7 +74,7 @@ winner1 :- winner1(D1, D2).
 
 % There exists a state where player 2 has the highest value but not player2 
 winner2(D1, D2) :- highest2(D1, D2), \+ tie(D1, D2).
-% There exists a state where player 1 and player 2 has the same card but not the coin is heads 
+% There exists a state where player 1 and player 2 has the same card but not the coin is tails 
 winner2(D1, D2) :- tie(D1, D2), coin(tails).
 winner2 :- winner2(D1, D2).
 

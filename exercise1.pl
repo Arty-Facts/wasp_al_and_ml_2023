@@ -54,7 +54,7 @@ draw2(X) :- deck2(X), card(V, X) , V>1, cheater.
 1/2::coin(heads); 1/2::coin(tails) :- \+ cheater.
 
 % There exists a Same state for two card suits that have the same value and player1 and player2 have drawn thea's card.
-tie(D1, D2) :- card(V1, D1), draw1(D1), card(V2, D2), draw2(D2), V1=V2.
+tie(D1, D2) :- card(V1, D1), draw1(D1), card(V2, D2), draw2(D2), V1==V2.
 tie :- tie(D1, D2).
 % There exists a highest1 state for two draws where the card value V1 is higher 
 % then V2 and player1 and player2 have drawn thea's card.

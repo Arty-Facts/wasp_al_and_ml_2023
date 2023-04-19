@@ -17,6 +17,10 @@ hand(Cards, Hand) :-
     quick_sort(Cards, Sorted, card_comp), % Needs to be sorted for pattern matching to work
     poker_hands(Sorted, Hand).
 
+
+card_comp(C1, C2):-
+     card(V1, C1), card(V2, C2), V1=<V2.
+     
 %A straight is a hand that contains five cards of sequential rank.
 poker_hands(Cards, straight(R1, R2, R3, R4, R5)) :- 
     single_card(Cards, R1, V1), 
@@ -27,31 +31,34 @@ poker_hands(Cards, straight(R1, R2, R3, R4, R5)) :-
     V1<V2, V2<V3, V3<V4, V4<V5, Diff is V5-V1, Diff == 4.
 
 single_card(Cards, Rank, Value) :-
-    single(Cards, Rank), 
+    single(Cards, [Rank]), 
     card(Value, Rank).
 
 % A full house is a hand that contains three cards of one rank and two cards of 
 % another rank    
-poker_hands(Cards, full_house(Rank1, Rank2)) :-
-    poker_hands(Cards, three_of_a_kind(Rank1)), 
-    poker_hands(Cards, one_pair(Rank2)), 
+poker_hands(Cards, full_house([Rank1, Rank2])) :-
+    poker_hands(Cards, three_of_a_kind([Rank1])), 
+    poker_hands(Cards, one_pair([Rank2])), 
     Rank1 \== Rank2.
 
-poker_hands(Cards, four_of_a_kind(Rank)) :-
+poker_hands(Cards, four_of_a_kind([Rank])) :-
     quadruplet(Cards, Rank).
 
-poker_hands(Cards, three_of_a_kind(Rank)) :-
+poker_hands(Cards, three_of_a_kind([Rank])) :-
     triplet(Cards, Rank).
 
-poker_hands(Cards, two_pair(Rank1, Rank2)) :-
-    poker_hands(Cards, one_pair(Rank1)),
-    poker_hands(Cards, one_pair(Rank2)),
+poker_hands(Cards, two_pair([Rank1, Rank2])) :-
+    poker_hands(Cards, one_pair([Rank1])),
+    poker_hands(Cards, one_pair([Rank2])),
+    card(Value1, Rank1),
+    card(Value2, Rank2),
+    Value1 > Value2, % make sure that order does not mature
     Rank1 \== Rank2.
     
-poker_hands(Cards, one_pair(Rank)) :-
+poker_hands(Cards, one_pair([Rank])) :-
     tuplet(Cards, Rank).
     
-poker_hands(Cards, high_card(Rank)) :-
+poker_hands(Cards, high_card([Rank])) :-
     single(Cards, Rank).
 
 % Use pattern matching to check if the first N elements in the list are the 
@@ -82,8 +89,6 @@ pivoting(H,[],[],[],_).
 pivoting(H,[X|T],[X|L],G,Comp):- call(Comp, H, X), pivoting(H,T,L,G, Comp).
 pivoting(H,[X|T],L,[X|G],Comp):- \+call(Comp, H, X), pivoting(H,T,L,G, Comp).
 
-card_comp(C1, C2):-
-     card(V1, C1), card(V2, C2), V1=<V2.
      
 %query(quick_sort([jack, king, jack, jack, queen, ace, jack,jack, ace, poop], _, card_comp)).
 %query(hand([jack, king, jack, jack, queen, ace, jack,jack, ace, 10], _)).
@@ -99,30 +104,46 @@ hand_ranks([
     ]).
     
     
-b_hand(Cards, Hands) :-
-    findall(Hand, hand(Cards, Hand), Hands).
+best_hand_rank(Cards, Best) :-
+    findall(Hand, hand(Cards, Hand), Hands), 
+    quick_sort(Hands, [Best|_], hand_ranks_comp).
 
+hand_ranks_comp(Hand1, Hand2):-
+    hand_value(Hand1, Value1),
+    hand_value(Hand2, Value2),
+    Value1 > Value2.
+    
+hand_ranks_comp(Hand1, Hand2):-
+    hand_value(Hand1, Value1),
+    hand_value(Hand2, Value2),
+    Value1 == Value2, 
+    compare_in_rank(Hand1, Hand2).
 
-hand_value(Hand, Value1) :-
+compare_in_rank(high_card(R1), high_card(R2)) :-   . 
+compare_in_rank(one_pair(_), one_pair(_)) :-  .
+compare_in_rank(two_pair(_, _), two_pair(_, _)) :-   .
+compare_in_rank(three_of_a_kind(_), three_of_a_kind(_)) :-  .
+compare_in_rank(straight(_,_,_,_,_), straight(_,_,_,_,_)) :-  . 
+compare_in_rank(full_house(_, _), full_house(_, _)) :-   . 
+compare_in_rank(four_of_a_kind(_)) :- .
+    
+    
+hand_value(Hand, Value):-
     hand_ranks(HandRankList),
-    hand(Hand, BestHandRank),
-    member(BestHandRank, HandRankList),
-    hand(Hand, OtherHandRank),
-    nth0(Value1, HandRankList, BestHandRank),
-    nth0(Value2, HandRankList, OtherHandRank),
-    forall(member(OtherHandRank, HandRankList), Value2 =< Value1).
+    member(Hand, HandRankList),
+    nth0(Value, HandRankList, Hand).
 
 better(BetterHand,WorseHand, HandValue1, HandValue2) :-
-    hand_value(BetterHand, HandValue1), 
-    hand_value(WorseHand, HandValue2),
-    HandValue1>HandValue2.
+    best_hand_rank(BetterHand, HandRank1), 
+    best_hand_rank(WorseHand, HandRank2),
+    HandRank1 > HandRank2.
 
 %better(BetterHand,WorseHand) :-
 %    hand(BetterHand, one_pair(R1)), hand(WorseHand, high_card(R2)),
 %    card(V1, R1), card(V2, R2), 
 %    V1>V2.
 
-query(b_hand([jack, king, jack], _)).
+query(best_hand_rank([jack, king, jack, ace, ace, jack], _)).
 
 %query(better([jack, king, jack], [jack, jack, jack], _, _)).
 

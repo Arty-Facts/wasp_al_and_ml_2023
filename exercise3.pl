@@ -16,21 +16,9 @@
 %%%%%%%%%
 % Facts %
 %%%%%%%%%
-% there are two decks  
-1/4::deck1(jack);
-1/4::deck1(queen);
-1/4::deck1(king);
-1/4::deck1(ace).
-
-1/4::deck2(jack);
-1/4::deck2(queen);
-1/4::deck2(king);
-1/4::deck2(ace).
-
-% cards have values
 
 % this is the order for card ranks from the weakest to the strongest hand
-1/4::ranks([jack, queen, king, ace]).
+ranks([jack, queen, king, ace]).
 
 cards_in_hand([1, 2, 3, 4]).
 
@@ -38,54 +26,63 @@ players([player1, player2]).
 % this is the order for hand ranks from the weakest to the strongest hand
 hand_ranks([highcard, onepair, twopair, threeofakind, straight, fullhouse, fourofakind]).
 
-
-%% Define the cards
-card(Player, N, Rank) :-
-    players(PlayerList),
-    member(Player, PlayerList),
-    cards_in_hand(Nth),
-    member(N, Nth),
-    ranks(RankList),
-    member(Rank, RankList),
-    nth0(Value, RankList, Rank).
-
-card_value(Rank, Value):-
-    ranks(RankList),
-    member(Rank, RankList),
-    nth0(Value, RankList, Rank).
-
-
 %the cheeper has one in five probability of cheating 
 1/5::cheater.
 
-%%%%%%%%%%%
-% Clauses %
-%%%%%%%%%%%
-% player1 is not affected by if player2 cheats use default probs
-% There exists a draw action that can take a card of any value with 1/4 probability
-draw1(X) :- deck1(X).
+%% Define the cards
+card(Player, N, Rank) :-
+    player(Player),
+    draw(Player, N, Rank).
 
-% if player2 is fair use default probs 
-% There exists a draw action that can take a card of any value with 1/4 probability if there is no cheater
-draw2(X) :- deck2(X), \+ cheater.
+player(Player) :-
+    players(PlayerList),
+    member(Player, PlayerList).
 
-% if player2 cheats replaced all the jack cards with ace 
-% There exists a draw action that can take a card of ace with probability of jack
-draw2(ace) :- deck2(jack), cheater.
+1/NbCards::draw(player1, N, Rank):-
+    ranks(RankList),
+    member(Rank, RankList), 
+    length(RankList, NbCards),
+    nb_cards(N).
 
-% There exists a draw action that can take a card of any value that is grater then one
-draw2(X) :- deck2(X), card(V, X) , V>1, cheater.
+1/NbCards::draw(player2, N, Rank):-
+    valid_card(Rank),
+    ranks(RankList),
+    length(RankList, NbCards), 
+    nb_cards(N), 
+    \+ cheater.
 
-% coin is unfair if there is a cheater
-0::coin(heads); 1::coin(tails) :- cheater.
+2/NbCards::draw(player2, N, ace):-
+    ranks(RankList),
+    length(RankList, NbCards),
+    nb_cards(N),
+    cheater.
 
-% coin is fair if nobody cheats
-1/2::coin(heads); 1/2::coin(tails) :- \+ cheater.
+1/NbCards::draw(player2, N, Rank) :-
+    valid_card(Rank),
+    ranks(RankList),
+    Rank \= jack, % jack and ace are accounted for in statement above  
+    Rank \= ace, 
+    length(RankList, NbCards),
+    nb_cards(N),
+    cheater.
 
+nb_cards(N):-
+    cards_in_hand(Nth), 
+    member(N, Nth).
 
-%%%% Insert Prolog code from Exercise 2
+card_value(Value, Rank):-
+    valid_card(Rank),
+    ranks(RankList),
+    nth0(Value, RankList, Rank).
 
+valid_card(Rank):-
+    ranks(RankList),
+    member(Rank, RankList).
 
+% evidence(cheater).
+% evidence(card(player2, 1, jack)).
+% query(card(player1, _, _)).
+% query(card(player2, _, _)).
 
 %% Define the poker hands
      
@@ -93,12 +90,12 @@ draw2(X) :- deck2(X), card(V, X) , V>1, cheater.
 % but according to the test its only four
 % hand(Cards, straight(R1, R2, R3, R4)) :-
 hand(Cards, straight) :-
-    select(R1, Cards, Rest1), card(V1, R1),
-    select(R2, Rest1, Rest2), card(V2, R2),
+    select(R1, Cards, Rest1), card_value(V1, R1),
+    select(R2, Rest1, Rest2), card_value(V2, R2),
     V1 + 1 =:= V2, %early terminate if possible to improve performance
-    select(R3, Rest2, Rest3), card(V3, R3),
+    select(R3, Rest2, Rest3), card_value(V3, R3),
     V2 + 1 =:= V3,
-    member(R4, Rest3), card(V4, R4),
+    member(R4, Rest3), card_value(V4, R4),
     V3 + 1 =:= V4.
 
 % A full house is a hand that contains three cards of one rank and two cards of 
@@ -106,15 +103,18 @@ hand(Cards, straight) :-
 hand(Cards, fullhouse(Rank1, Rank2)) :-
     hand(Cards, threeofakind(Rank1)), 
     hand(Cards, onepair(Rank2)), 
-    Rank1 \= Rank2.
+    Rank1 \= Rank2, 
+    valid_card(Rank1),valid_card(Ran2).
 
 hand(Cards, fourofakind(Rank)) :-
+    valid_card(Rank),
     select(Rank, Cards, Rest1),
     select(Rank, Rest1, Rest2),
     select(Rank, Rest2, Rest3),
     member(Rank, Rest3).
 
 hand(Cards, threeofakind(Rank)) :-
+    valid_card(Rank),
     select(Rank, Cards, Rest1),
     select(Rank, Rest1, Rest2),
     member(Rank, Rest2).
@@ -122,16 +122,19 @@ hand(Cards, threeofakind(Rank)) :-
 hand(Cards, twopair(Rank1, Rank2)) :-
     hand(Cards, onepair(Rank1)),
     hand(Cards, onepair(Rank2)),
-    Rank1 \= Rank2.
+    Rank1 \= Rank2, 
+    valid_card(Rank1),valid_card(Ran2).
     
 hand(Cards, onepair(Rank)) :-
+    valid_card(Rank),
     select(Rank, Cards, Rest1),
     member(Rank, Rest1).
     
 hand(Cards, highcard(Rank)) :-
+    valid_card(Rank),
     member(Rank, Cards).
 
-% query(hand([jack, king, jack, jack, queen, ace, jack,jack, ace, queen, queen, king, ace], _)).
+%query(hand([poop, poop, jack, king, jack, jack, queen, ace, jack,jack, ace, queen, queen, king, ace], _)).
 
 better(Hand1, Hand2):-
     hand_value(Hand1, Value1),
@@ -153,13 +156,13 @@ hand_value(Hand, Value):-
     nth0(Value, HandRankList, HandRank).
 
 compare_in_rank([Rank1| _], [Rank2| _]) :-
-       card(Value1, Rank1), 
-       card(Value2, Rank2),
+       card_value(Value1, Rank1), 
+       card_value(Value2, Rank2),
        Value1 > Value2.
 
 compare_in_rank([Rank1| Tail1], [Rank2| Tail2]) :-
-       card(Value1, Rank1), 
-       card(Value2, Rank2),
+       card_value(Value1, Rank1), 
+       card_value(Value2, Rank2),
        Value1 =:= Value2,
        compare_in_rank(Tail1, Tail2).
 
@@ -171,15 +174,15 @@ decompose(Hand, HandRank, Ranks) :-
 % query(better(fullhouse(king,queen),fullhouse(king,jack))).
 % query(best_hand([jack, king, jack, ace],_)).
 
-hand(Cards,Hand).
-better(BetterHand,WorseHand).
 
 %%%% Provided code
 
 % The following predicate will sample a Hand as a list of ranks for the given player.
 % It expects that there are probabilistic facts of the form card(Player,N,Rank) as specified above
 
-draw_hand(Player,Hand) :- maplist(card(Player),[1,2,3,4],Hand).
+draw_hand(Player,Hand) :- maplist(card(Player),[1, 2, 3],Hand).
+
+query(draw_hand(player1,_)).
 
 game_outcome(Cards1,Cards2,Outcome) :-
     best_hand(Cards1,Hand1),

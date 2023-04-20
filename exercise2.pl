@@ -12,6 +12,10 @@ card(Value, Rank) :-
     member(Rank, RankList),
     nth0(Value, RankList, Rank).
 
+valid_card(Rank):-
+    ranks(RankList),
+    member(Rank, RankList).
+
 %% Define the poker hands
      
 % A straight is a hand that contains five cards of sequential rank.
@@ -31,15 +35,18 @@ hand(Cards, straight) :-
 hand(Cards, fullhouse(Rank1, Rank2)) :-
     hand(Cards, threeofakind(Rank1)), 
     hand(Cards, onepair(Rank2)), 
-    Rank1 \= Rank2.
+    Rank1 \= Rank2, 
+    valid_card(Rank1),valid_card(Ran2).
 
 hand(Cards, fourofakind(Rank)) :-
+    valid_card(Rank),
     select(Rank, Cards, Rest1),
     select(Rank, Rest1, Rest2),
     select(Rank, Rest2, Rest3),
     member(Rank, Rest3).
 
 hand(Cards, threeofakind(Rank)) :-
+    valid_card(Rank),
     select(Rank, Cards, Rest1),
     select(Rank, Rest1, Rest2),
     member(Rank, Rest2).
@@ -47,16 +54,19 @@ hand(Cards, threeofakind(Rank)) :-
 hand(Cards, twopair(Rank1, Rank2)) :-
     hand(Cards, onepair(Rank1)),
     hand(Cards, onepair(Rank2)),
-    Rank1 \= Rank2.
+    Rank1 \= Rank2, 
+    valid_card(Rank1),valid_card(Ran2).
     
 hand(Cards, onepair(Rank)) :-
+    valid_card(Rank),
     select(Rank, Cards, Rest1),
     member(Rank, Rest1).
     
 hand(Cards, highcard(Rank)) :-
+    valid_card(Rank),
     member(Rank, Cards).
 
-% query(hand([jack, king, jack, jack, queen, ace, jack,jack, ace, queen, queen, king, ace], _)).
+%query(hand([poop, poop, jack, king, jack, jack, queen, ace, jack,jack, ace, queen, queen, king, ace], _)).
 
 better(Hand1, Hand2):-
     hand_value(Hand1, Value1),

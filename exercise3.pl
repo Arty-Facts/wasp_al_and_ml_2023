@@ -28,10 +28,32 @@
 1/4::deck2(ace).
 
 % cards have values
-card(1,jack).
-card(2,queen).
-card(3,king).
-card(4,ace).
+
+% this is the order for card ranks from the weakest to the strongest hand
+1/4::ranks([jack, queen, king, ace]).
+
+cards_in_hand([1, 2, 3, 4]).
+
+players([player1, player2]).
+% this is the order for hand ranks from the weakest to the strongest hand
+hand_ranks([highcard, onepair, twopair, threeofakind, straight, fullhouse, fourofakind]).
+
+
+%% Define the cards
+card(Player, N, Rank) :-
+    players(PlayerList),
+    member(Player, PlayerList),
+    cards_in_hand(Nth),
+    member(N, Nth),
+    ranks(RankList),
+    member(Rank, RankList),
+    nth0(Value, RankList, Rank).
+
+card_value(Rank, Value):-
+    ranks(RankList),
+    member(Rank, RankList),
+    nth0(Value, RankList, Rank).
+
 
 %the cheeper has one in five probability of cheating 
 1/5::cheater.
@@ -63,17 +85,7 @@ draw2(X) :- deck2(X), card(V, X) , V>1, cheater.
 
 %%%% Insert Prolog code from Exercise 2
 
-% this is the order for card ranks from the weakest to the strongest hand
-ranks([jack, queen, king, ace]).
-% this is the order for hand ranks from the weakest to the strongest hand
-hand_ranks([highcard, onepair, twopair, threeofakind, straight, fullhouse, fourofakind]).
 
-
-%% Define the cards
-card(Value, Rank) :-
-    ranks(RankList),
-    member(Rank, RankList),
-    nth0(Value, RankList, Rank).
 
 %% Define the poker hands
      

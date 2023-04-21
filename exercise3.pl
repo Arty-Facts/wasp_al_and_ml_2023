@@ -236,14 +236,14 @@ winner(Outcome):-
 % winner(player1):        0.11541525
 % winner(player2):        0.22948785
 % 
-% RANT: Playing with 2 card in hand is more feasible and the results presented are from that 
-% commutation. One thing that frustrates me is that the probabilities for player1 and player2 does not add up to 1 but i cant 
-% solve since i have spent way to match time on this lab hence i as for help from you!
-% This was a fun lab to do but i did not expect spending 60h to explore the intreating landscape of Prolog and Problog.  
-% If this lab will be offered for other student a in the future a better cheat sheet is needed since documentation is lacking 
-% and all Prolog features are not supported. But nice to knows are how to decompose statements how to identify issues with stochastic 
-% memoization and how to use trial identifier. Is there a debugger and or a profiler?  
-% My final thoughts im very open for feedback since i can se myself using Problog in the future but im not 
-% really sure about best practices. Since its first time for me using Prolog and Problog I assume the there are many weird stuff
-% in the code and i would love to get feedback how to improve.
-% thanks.      
+% RANT: Playing with 2 cards in hand is more feasible, and the presented results are based on that. However, one frustrating 
+% issue is that the probabilities for player 1 and player 2 do not add up to 1, but I have spent too much time on this 
+% lab and am asking for your help. This was a fun lab to do, but I did not expect to spend 60 hours exploring the 
+% interesting landscape of Prolog and Problog. If this lab will be offered to other students in the future, a better 
+% cheat sheet is necessary since documentation is lacking and not all Prolog features are supported. However, it is good 
+% to know how to decompose statements, how to identify issues with stochastic memoization, and how to use trial identifiers. 
+% Is there a debugger and/or profiler available?
+
+% In conclusion, I am very open to feedback since I can see myself using Problog in the future, but I am not sure about 
+% the best practices. Since it's my first time using Prolog and Problog, I assume that there are many weird things in the
+% code, and I would appreciate feedback on how to improve. Thank you.     

@@ -6,17 +6,6 @@
 % Encode the different cards as follows: card(Player,N,Rank)
 % This means that the N-th card drawn by Player is of the given Rank.
 
-% Cheater -> Draw2, Cheater -> Coin,
-% Draw1 -> Highest
-% Draw2 -> Highest
-% Highest -> Coin
-% Highest -> Winner
-% Coin -> Winner
-
-%%%%%%%%%
-% Facts %
-%%%%%%%%%
-
 % this is the order for card ranks from the weakest to the strongest hand
 ranks([jack, queen, king, ace]).
 
@@ -26,36 +15,46 @@ players([player1, player2]).
 % this is the order for hand ranks from the weakest to the strongest hand
 hand_ranks([highcard, onepair, twopair, threeofakind, straight, fullhouse, fourofakind]).
 
-%the cheeper has one in five probability of cheating 
-1/5::cheater.
+% the cheeper has one in five probability of cheating 
+1/5::cheater(T_ID):- % need T_ID for trial identifier
+    card_nb(T_ID).
+
+% coin is unfair if there is a cheater
+0::coin(heads); 1::coin(tails) :- cheater(T_ID).
+
+% coin is fair if nobody cheats
+1/2::coin(heads); 1/2::coin(tails) :- \+ cheater(T_ID).
+% evidence(cheater(T_ID)).
+% query(coin(_)).
 
 %% Define the cards
 card(Player, N, Rank) :-
     player(Player),
     draw(Player, N, Rank).
+    % write(Player), write(' was dealt '), write(N), write(Rank), nl.
 
 player(Player) :-
     players(PlayerList),
     member(Player, PlayerList).
 
-1/NbCards::draw(player1, N, Rank):-
+1/NbCards::draw(player1, N, Rank):- 
     ranks(RankList),
     member(Rank, RankList), 
     length(RankList, NbCards),
-    nb_cards(N).
+    card_nb(N).
 
 1/NbCards::draw(player2, N, Rank):-
     valid_card(Rank),
     ranks(RankList),
     length(RankList, NbCards), 
-    nb_cards(N), 
-    \+ cheater.
+    card_nb(N), 
+    \+ cheater(N).
 
 2/NbCards::draw(player2, N, ace):-
     ranks(RankList),
     length(RankList, NbCards),
-    nb_cards(N),
-    cheater.
+    card_nb(N),
+    cheater(N).
 
 1/NbCards::draw(player2, N, Rank) :-
     valid_card(Rank),
@@ -63,10 +62,10 @@ player(Player) :-
     Rank \= jack, % jack and ace are accounted for in statement above  
     Rank \= ace, 
     length(RankList, NbCards),
-    nb_cards(N),
-    cheater.
+    card_nb(N),
+    cheater(N).
 
-nb_cards(N):-
+card_nb(N):-
     cards_in_hand(Nth), 
     member(N, Nth).
 
@@ -79,10 +78,10 @@ valid_card(Rank):-
     ranks(RankList),
     member(Rank, RankList).
 
-% evidence(cheater).
+% evidence(cheater(N)).
 % evidence(card(player2, 1, jack)).
 % query(card(player1, _, _)).
-% query(card(player2, _, _)).
+% query(card(player2, 1, _)).
 
 %% Define the poker hands
      
@@ -180,9 +179,11 @@ decompose(Hand, HandRank, Ranks) :-
 % The following predicate will sample a Hand as a list of ranks for the given player.
 % It expects that there are probabilistic facts of the form card(Player,N,Rank) as specified above
 
-draw_hand(Player,Hand) :- maplist(card(Player),[1, 2, 3],Hand).
+draw_hand(Player,Cards) :- cards_in_hand(CardIndex), maplist(card(Player), CardIndex ,Cards).
 
-query(draw_hand(player1,_)).
+% evidence(cheater(N)).
+% query(draw_hand(player1,_)).
+% query(draw_hand(player2,_)).
 
 game_outcome(Cards1,Cards2,Outcome) :-
     best_hand(Cards1,Hand1),
@@ -191,23 +192,58 @@ game_outcome(Cards1,Cards2,Outcome) :-
 
 outcome(Hand1,Hand2,player1) :- better(Hand1,Hand2).
 outcome(Hand1,Hand2,player2) :- better(Hand2,Hand1).
-outcome(Hand1,Hand2,tie) :- \+better(Hand1,Hand2), \+better(Hand2,Hand1).
+outcome(Hand1,Hand2,player1) :- \+better(Hand1,Hand2), \+better(Hand2,Hand1), coin(heads).
+outcome(Hand1,Hand2,player2) :- \+better(Hand1,Hand2), \+better(Hand2,Hand1), coin(tails).
 
 best_hand(Cards,Hand) :-
     hand(Cards,Hand),
     \+ (hand(Cards,Hand2), better(Hand2,Hand)).
 
-
-
+winner(Outcome):- 
+    player(Outcome), 
+    draw_hand(player1,Cards1), 
+    draw_hand(player2,Cards2), 
+    game_outcome(Cards1,Cards2,Outcome). 
+%winner(Outcome):- draw_hand(player1,Hand1), draw_hand(player2,Hand2), player(Outcome), outcome(Hand1,Hand2,Outcome).
+% winner(Outcome) :- winner(Outcome, Hand1, Hand2).
 %%%% What’s the probability that player2 draws the hand [ace, king, queen, ace].
+%%%% Your answer : query(draw_hand(player2,[ace, king, queen, ace])).:  0.005625
+
+
+%%%%  Given that player2 draws the hand [ace, king, queen, ace], and that the coin comes up tails, 
+%%%%  what is the posterior belief that your opponent is cheating?
+%%%% Your answer : t(_)::cheater(T_ID): 1	
+% ---
+% evidence(coin(tails)).
+% evidence(draw_hand(player2,[ace, king, queen, ace])).
+% ---
+
+
+%%%%  What is the prior probability that player 1 wins?
+%%%% 1 Why does this query take so long to answer? What is the probability that player 1 wins, given that you know that player 2 is a cheater?
 %%%% Your answer : 
-
-
-
-%%%%  Given that player2 draws the hand [ace, king, queen, ace], and that the coin comes up tails, what is the posterior belief that your opponent is cheating?
-%%%% Your answer : 
-
-
-
-%%%%  What is the prior probability that player 1 wins?1 Why does this query take so long to answer? What is the probability that player 1 wins, given that you know that player 2 is a cheater?
-%%%% Your answer : 
+% Q1
+% query(winner(player1)).
+% winner(player1):        0.1562878
+% winner(player2):        0.1834804
+% Well player1 has 4 cards and there are 4^4 permutation of hands and every hand can hold many probabilities for the most likely best hands.
+% The same hold for player2 so one can se how the number computation explodes with O(n^4) and since every branch need to be 
+% evaluated to compute the probability.
+% 
+% Q2
+% evidence(cheater(N)).
+% query(winner(player1)).
+% winner(player1):        0.11541525
+% winner(player2):        0.22948785
+% 
+% RANT: Playing with 2 card in hand is more feasible and the results presented are from that 
+% commutation. One thing that frustrates me is that the probabilities for player1 and player2 does not add up to 1 but i cant 
+% solve since i have spent way to match time on this lab hence i as for help from you!
+% This was a fun lab to do but i did not expect spending 60h to explore the intreating landscape of Prolog and Problog.  
+% If this lab will be offered for other student a in the future a better cheat sheet is needed since documentation is lacking 
+% and all Prolog features are not supported. But nice to knows are how to decompose statements how to identify issues with stochastic 
+% memoization and how to use trial identifier. Is there a debugger and or a profiler?  
+% My final thoughts im very open for feedback since i can se myself using Problog in the future but im not 
+% really sure about best practices. Since its first time for me using Prolog and Problog I assume the there are many weird stuff
+% in the code and i would love to get feedback how to improve.
+% thanks.      

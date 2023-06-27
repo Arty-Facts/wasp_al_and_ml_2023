@@ -8,7 +8,9 @@ __banner()
 
 if [[ $1 == "clean" ]]; then 
     __banner Remove old env...
-    rm -rf .venv/ 
+    if [[ -d ".venv" ]]; then 
+        rm -rf .venv/ 
+    fi
 fi
 
 python3 -m venv .venv

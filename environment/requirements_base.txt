@@ -6,3 +6,6 @@ notebook
 tqdm
 h5py
 pandas
+wfdb
+xmljson
+ecg-plot

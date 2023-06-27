@@ -1,2 +1,8 @@
 problog
 jupyter
+numpy
+matplotlib
+notebook
+tqdm
+h5py
+pandas

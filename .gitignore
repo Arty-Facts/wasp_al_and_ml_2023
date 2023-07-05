@@ -6,3 +6,4 @@ __pycache__
 module3/codesubset
 module3/ecg_preprocessing
 module3/codesubset.tar.gz
+module3/model.pth

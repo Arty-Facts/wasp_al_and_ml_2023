@@ -153,7 +153,6 @@ def fit(learning_rate, weight_decay, num_epochs, model, train_dataloader, valid_
     """
     TASK: Replace the baseline model with your model; Insert your code here
     """
-    model = model()
     model.to(device=device)
     if verbose:
         print("Done!\n")
@@ -214,9 +213,17 @@ def fit(learning_rate, weight_decay, num_epochs, model, train_dataloader, valid_
         precision_all.append(precision_score(y_true, y_pred))
         recall_all.append(recall_score(y_true, y_pred))
         f1_all.append(f1_score(y_true, y_pred))
+        curr_valid = valid_loss_all[-1]
+        curr_auroc = auroc_all[-1]
+        curr_accuracy = accuracy_all[-1]
+        curr_precision = precision_all[-1]
+        curr_recall = recall_all[-1]
+        curr_f1 = f1_all[-1]
+        harmonic = 5 * (curr_auroc * curr_accuracy * curr_precision * curr_recall * curr_f1)/(curr_auroc + curr_accuracy + curr_precision + curr_recall + curr_f1 + 1e-6)
+        curr_loss = curr_valid + (1-harmonic)
     
         # save best model: here we save the model only for the lowest validation loss
-        if valid_loss < best_loss:
+        if curr_loss < best_loss:
             # Save model parameters
             # torch.save({'model': model.state_dict()}, 'model.pth') 
             # Update best validation loss
@@ -226,8 +233,7 @@ def fit(learning_rate, weight_decay, num_epochs, model, train_dataloader, valid_
             best_precision = precision_all[-1]
             best_recall = recall_all[-1]
             best_f1 = f1_all[-1]
-            harmonic = 5 * (best_auroc * best_accuracy * best_precision * best_recall * best_f1)/(best_auroc + best_accuracy + best_precision + best_recall + best_f1 + 1e-6)
-            best_loss = best_valid + (1-harmonic)
+            best_loss = curr_loss
             # statement
             model_save_state = "Best model -> saved"
         else:
@@ -255,7 +261,7 @@ def fit(learning_rate, weight_decay, num_epochs, model, train_dataloader, valid_
 
 
 def ask_tell_optuna(objective_func, study_name, storage_name):
-    study = optuna.create_study(directions=["minimize", "minimize", "maximize", "maximize", "maximize"], study_name=study_name, storage=storage_name, load_if_exists=True,)
+    study = optuna.load_study(study_name=study_name, storage=storage_name)
     trial = study.ask()
     res = objective_func(trial)
     study.tell(trial, res)
@@ -295,15 +301,140 @@ def base_model_objective(
         valid_dataloader,
         device,       
         trial):
-    learning_rate = trial.suggest_float("learning_rate", 1e-8, 1e2, log=True)
-    weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e2, log=True)
+    learning_rate = trial.suggest_float("learning_rate", 1e-8, 1e-2, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True)
     # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
     best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(learning_rate=learning_rate, 
                                                                                                      weight_decay=weight_decay, 
                                                                                                      num_epochs=num_epochs, 
-                                                                                                     model=ModelBaseline, 
+                                                                                                     model=ModelBaseline(), 
                                                                                                      train_dataloader=train_dataloader, 
                                                                                                      valid_dataloader=valid_dataloader,
                                                                                                      verbose=False, 
                                                                                                      device=device)
     return best_loss, best_valid, best_auroc, best_accuracy, best_f1
+
+def model_objective(
+        num_epochs,
+        train_dataloader,
+        valid_dataloader,
+        device,       
+        trial):
+    learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-2, log=True)
+    kernel_size= trial.suggest_int("kernel_size", 3, 15, step=2)
+    num_layers = trial.suggest_int("num_layers", 1, 7)
+    steps = trial.suggest_int("steps", 0, 3)
+    dropout = trial.suggest_float("dropout", 0.0, 0.5)
+    lin_steps = trial.suggest_int("lin_steps", 0, 3)
+    # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
+    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(learning_rate=learning_rate, 
+                                                                                                     weight_decay=weight_decay, 
+                                                                                                     num_epochs=num_epochs, 
+                                                                                                     model=Model(kernel_size=kernel_size, num_layers=num_layers, steps=steps, dropout=dropout, lin_steps=lin_steps), 
+                                                                                                     train_dataloader=train_dataloader, 
+                                                                                                     valid_dataloader=valid_dataloader,
+                                                                                                     verbose=False, 
+                                                                                                     device=device)
+    return best_loss, best_valid, best_auroc, best_accuracy, best_f1
+
+class Conv1EncoderBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, steps=2):
+        super().__init__()
+        self.steps = steps
+        self.layers = nn.Sequential(
+            nn.Conv1d(in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=kernel_size,
+                        stride=2,
+                        padding=kernel_size//2,
+                        bias=False),
+            nn.ReLU())
+        self.skip_layers = nn.Sequential(
+            *[ 
+                nn.Sequential(
+                nn.BatchNorm1d(out_channels), 
+                nn.Conv1d(in_channels=out_channels,
+                            out_channels=out_channels,
+                            kernel_size=kernel_size,
+                            stride=1,
+                            padding=kernel_size//2,
+                            bias=False),
+                nn.ReLU()
+            )for _ in range(steps)]
+        )
+    
+    def forward(self, x):
+        x = self.layers(x)
+        if self.steps > 0:
+            x = x + self.skip_layers(x)
+        return x
+    
+class Conv1ReducerBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, steps=2):
+        super().__init__()
+        self.steps = steps
+        self.layers = nn.Sequential(
+            nn.Conv1d(in_channels=in_channels,
+                        out_channels=out_channels,
+                        kernel_size=kernel_size,
+                        stride=1,
+                        padding=kernel_size//2,
+                        bias=False),
+            nn.ReLU())
+        self.skip_layers = nn.Sequential(
+            *[ 
+                nn.Sequential(
+                nn.BatchNorm1d(out_channels), 
+                nn.Conv1d(in_channels=out_channels,
+                            out_channels=out_channels,
+                            kernel_size=kernel_size,
+                            stride=1,
+                            padding=kernel_size//2,
+                            bias=False),
+                nn.ReLU()
+            )for _ in range(steps)]
+        )
+    
+    def forward(self, x):
+        x = self.layers(x)
+        if self.steps > 0:
+            x = x + self.skip_layers(x)
+        return x
+
+
+
+class Model(nn.Module):
+    def __init__(self, kernel_size=3, num_layers=5, steps=2, dropout=0.5, lin_steps=1):
+        super().__init__()
+        data_width = 4096
+        in_channels = 8
+
+        self.encoder = nn.Sequential(
+            *[ Conv1EncoderBlock(in_channels*(2**i), in_channels*(2**(i+1)), kernel_size, steps) for i in range(num_layers)])
+        self.reducer = nn.Sequential(
+            *[ Conv1ReducerBlock(in_channels*(2**i), in_channels*(2**(i-1)), kernel_size, steps) for i in range(num_layers, 0, -1)], 
+            Conv1ReducerBlock(8, 1, kernel_size, steps)
+            )
+        # linear layer
+        out_channels = data_width//(2**(num_layers))
+        self.lin = nn.Sequential(
+            *[nn.Sequential(
+                nn.Linear(in_features=out_channels,
+                                out_features=out_channels), 
+                nn.Dropout(dropout), 
+                nn.ReLU()
+            ) for _ in range(lin_steps)],
+            nn.Linear(in_features=out_channels,
+                                out_features=1),
+        )
+        
+
+    def forward(self, x):
+        x= x.transpose(2,1)
+        x = self.encoder(x)
+        x = self.reducer(x)
+        x_flat= x.view(x.size(0), -1)
+        x = self.lin(x_flat)
+        return x
+    

@@ -10,3 +10,4 @@ module3/model.pth
 module3/prediction*.json
 module3/checkpoints/optuna.db
 module3/checkpoints/.nfs*
+module3/*.pth

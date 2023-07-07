@@ -144,7 +144,7 @@ def eval_loop(prefix, dataloader, model, loss_function, device):
 
     return total_loss / n_entries, np.vstack(valid_pred), np.vstack(valid_true)
 
-def fit(learning_rate, weight_decay, num_epochs, model, train_dataloader, valid_dataloader ,seed=42, verbose=True, device="cuda:0"):
+def fit(learning_rate, weight_decay, num_epochs, model, optimizer, train_dataloader, valid_dataloader ,seed=42, verbose=True, device="cuda:0"):
     np.random.seed(seed)
     torch.manual_seed(seed)
     # =============== Define model ============================================#
@@ -163,11 +163,6 @@ def fit(learning_rate, weight_decay, num_epochs, model, train_dataloader, valid_
     """
     loss_function = torch.nn.BCELoss()
 
-    # =============== Define optimizer ========================================#
-    if verbose:
-        print("Define optimiser...")
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    
     if verbose:
         print("Done!\n")
 
@@ -303,11 +298,14 @@ def base_model_objective(
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-8, 1e-2, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True)
+    model=ModelBaseline()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
     best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(learning_rate=learning_rate, 
                                                                                                      weight_decay=weight_decay, 
                                                                                                      num_epochs=num_epochs, 
                                                                                                      model=ModelBaseline(), 
+                                                                                                     optimizer=optimizer,
                                                                                                      train_dataloader=train_dataloader, 
                                                                                                      valid_dataloader=valid_dataloader,
                                                                                                      verbose=False, 
@@ -322,31 +320,59 @@ def model_objective(
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-2, log=True)
+    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    esp = trial.suggest_float("esp", 1e-9, 1e-2, log=True)
+
     kernel_size= trial.suggest_int("kernel_size", 3, 15, step=2)
-    num_layers = trial.suggest_int("num_layers", 1, 7)
     steps = trial.suggest_int("steps", 0, 3)
     dropout = trial.suggest_float("dropout", 0.0, 0.5)
+
+    encode_layers = trial.suggest_int("encode_layers", 1, 7)
+    encoder_out_channels = trial.suggest_int("encoder_out_channels", 32, 1024, step=32)
+
+    reduce_layers = trial.suggest_int("reduce_layers", 1, 7)
+    reduce_out_channels = trial.suggest_int("reduce_out_channels", 1, 16, step=1)
+
+    lin_dims = trial.suggest_int("lin_dims", 32, 512, step=32)
     lin_steps = trial.suggest_int("lin_steps", 0, 3)
-    # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
-    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(learning_rate=learning_rate, 
-                                                                                                     weight_decay=weight_decay, 
-                                                                                                     num_epochs=num_epochs, 
-                                                                                                     model=Model(kernel_size=kernel_size, num_layers=num_layers, steps=steps, dropout=dropout, lin_steps=lin_steps), 
-                                                                                                     train_dataloader=train_dataloader, 
-                                                                                                     valid_dataloader=valid_dataloader,
-                                                                                                     verbose=False, 
-                                                                                                     device=device)
+
+    model=Model_V2(
+            kernel_size=kernel_size, 
+            encode_layers=encode_layers,
+            encoder_out_channels=encoder_out_channels,
+            reduce_layers=reduce_layers,
+            reduce_out_channels=reduce_out_channels,
+            steps=steps, 
+            dropout=dropout, 
+            lin_steps=lin_steps, 
+            lin_dims=lin_dims,
+        )
+    optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2), eps=esp)
+    
+
+
+    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
+        learning_rate=learning_rate, 
+        weight_decay=weight_decay, 
+        num_epochs=num_epochs, 
+        model=model, 
+        optimizer=optimizer,
+        train_dataloader=train_dataloader, 
+        valid_dataloader=valid_dataloader,
+        verbose=False, 
+        device=device)
     return best_loss, best_valid, best_auroc, best_accuracy, best_f1
 
-class Conv1EncoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, steps=2):
+class Conv1Block(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, steps=2, stride=1):
         super().__init__()
         self.steps = steps
         self.layers = nn.Sequential(
             nn.Conv1d(in_channels=in_channels,
                         out_channels=out_channels,
                         kernel_size=kernel_size,
-                        stride=2,
+                        stride=stride,
                         padding=kernel_size//2,
                         bias=False),
             nn.ReLU())
@@ -370,40 +396,6 @@ class Conv1EncoderBlock(nn.Module):
             x = x + self.skip_layers(x)
         return x
     
-class Conv1ReducerBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, steps=2):
-        super().__init__()
-        self.steps = steps
-        self.layers = nn.Sequential(
-            nn.Conv1d(in_channels=in_channels,
-                        out_channels=out_channels,
-                        kernel_size=kernel_size,
-                        stride=1,
-                        padding=kernel_size//2,
-                        bias=False),
-            nn.ReLU())
-        self.skip_layers = nn.Sequential(
-            *[ 
-                nn.Sequential(
-                nn.BatchNorm1d(out_channels), 
-                nn.Conv1d(in_channels=out_channels,
-                            out_channels=out_channels,
-                            kernel_size=kernel_size,
-                            stride=1,
-                            padding=kernel_size//2,
-                            bias=False),
-                nn.ReLU()
-            )for _ in range(steps)]
-        )
-    
-    def forward(self, x):
-        x = self.layers(x)
-        if self.steps > 0:
-            x = x + self.skip_layers(x)
-        return x
-
-
-
 class Model(nn.Module):
     def __init__(self, kernel_size=3, num_layers=5, steps=2, dropout=0.5, lin_steps=1):
         super().__init__()
@@ -411,10 +403,10 @@ class Model(nn.Module):
         in_channels = 8
 
         self.encoder = nn.Sequential(
-            *[ Conv1EncoderBlock(in_channels*(2**i), in_channels*(2**(i+1)), kernel_size, steps) for i in range(num_layers)])
+            *[ Conv1Block(in_channels*(2**i), in_channels*(2**(i+1)), kernel_size, steps, stride=2) for i in range(num_layers)])
         self.reducer = nn.Sequential(
-            *[ Conv1ReducerBlock(in_channels*(2**i), in_channels*(2**(i-1)), kernel_size, steps) for i in range(num_layers, 0, -1)], 
-            Conv1ReducerBlock(8, 1, kernel_size, steps)
+            *[ Conv1Block(in_channels*(2**i), in_channels*(2**(i-1)), kernel_size, steps, stride=1) for i in range(num_layers, 0, -1)], 
+            Conv1Block(8, 1, kernel_size, steps, stride=1)
             )
         # linear layer
         out_channels = data_width//(2**(num_layers))
@@ -426,6 +418,55 @@ class Model(nn.Module):
                 nn.ReLU()
             ) for _ in range(lin_steps)],
             nn.Linear(in_features=out_channels,
+                                out_features=1),
+        )
+        
+
+    def forward(self, x):
+        x= x.transpose(2,1)
+        x = self.encoder(x)
+        x = self.reducer(x)
+        x_flat= x.view(x.size(0), -1)
+        x = self.lin(x_flat)
+        return x
+
+class Model_V2(nn.Module):
+    def __init__(self, 
+                 kernel_size=3, 
+                 encode_layers=3,
+                 encoder_out_channels=256,
+                 reduce_layers=3,
+                 reduce_out_channels=4,
+                 steps=1, 
+                 dropout=0.5, 
+                 lin_steps=1, 
+                 lin_dims=256, 
+                 ):
+        super().__init__()
+        data_width = 4096
+        in_channels = 8
+        encoder_channels = np.linspace(in_channels, encoder_out_channels, encode_layers+1, dtype=int)
+        self.encoder = nn.Sequential(
+            *[ Conv1Block(in_c, out_c, kernel_size, steps, stride=2) for in_c, out_c in zip(encoder_channels[:-1], encoder_channels[1:])])
+        
+        reducer_channels = np.linspace(encoder_out_channels, reduce_out_channels, reduce_layers+1, dtype=int)
+        self.reducer = nn.Sequential(
+            *[ Conv1Block(in_c, out_c, kernel_size, steps,  stride=1) for in_c, out_c in zip(reducer_channels[:-1], reducer_channels[1:])]
+            )
+        # linear layer
+        out_channels = reduce_out_channels*data_width//(2**(encode_layers))
+        self.lin = nn.Sequential(
+            nn.Linear(in_features=out_channels,
+                                out_features=lin_dims),
+            nn.Dropout(dropout),
+            nn.ReLU(),
+            *[nn.Sequential(
+                nn.Linear(in_features=lin_dims,
+                                out_features=lin_dims), 
+                nn.Dropout(dropout), 
+                nn.ReLU()
+            ) for _ in range(lin_steps)],
+            nn.Linear(in_features=lin_dims,
                                 out_features=1),
         )
         

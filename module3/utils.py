@@ -96,7 +96,7 @@ class ModelBaseline(nn.Module):
         return x
 
 
-def train_loop(prefix, dataloader, model, optimizer, loss_function, device):
+def train_loop(prefix, dataloader, model, optimizer, lr_scheduler, loss_function, device):
     # model to training mode (important to correctly handle dropout or batchnorm layers)
     model.train()
     # allocation
@@ -112,6 +112,9 @@ def train_loop(prefix, dataloader, model, optimizer, loss_function, device):
         loss = loss_function(nn.functional.sigmoid(output), diagnoses) # compute loss
         loss.backward() # compute gradients
         optimizer.step() # update parameters
+        if lr_scheduler:
+            lr_scheduler.step()
+
 
         # Update accumulated values
         total_loss += loss.detach().cpu().numpy()
@@ -144,34 +147,13 @@ def eval_loop(prefix, dataloader, model, loss_function, device):
 
     return total_loss / n_entries, np.vstack(valid_pred), np.vstack(valid_true)
 
-def fit(learning_rate, weight_decay, num_epochs, model, optimizer, train_dataloader, valid_dataloader ,seed=42, verbose=True, device="cuda:0"):
+def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0"):
     np.random.seed(seed)
     torch.manual_seed(seed)
-    # =============== Define model ============================================#
-    if verbose:
-        print("Define model...")
-    """
-    TASK: Replace the baseline model with your model; Insert your code here
-    """
+
     model.to(device=device)
-    if verbose:
-        print("Done!\n")
 
-    # =============== Define loss function ====================================#
-    """
-    TASK: define the loss; Insert your code here. This can be done in 1 line of code
-    """
     loss_function = torch.nn.BCELoss()
-
-    if verbose:
-        print("Done!\n")
-
-    # =============== Define lr scheduler =====================================#
-    # TODO advanced students (non mandatory)
-    """
-    OPTIONAL: define a learning rate scheduler; Insert your code here
-    """
-    lr_scheduler = None
 
     # =============== Train model =============================================#
     if verbose:
@@ -190,7 +172,7 @@ def fit(learning_rate, weight_decay, num_epochs, model, optimizer, train_dataloa
         prefix = f""
         
         # training loop
-        train_loss = train_loop(prefix, train_dataloader, model, optimizer, loss_function, device)
+        train_loss = train_loop(prefix, train_dataloader, model, optimizer,lr_scheduler, loss_function, device)
         # validation loop
         valid_loss, y_pred, y_true = eval_loop(prefix, valid_dataloader, model, loss_function, device)
 
@@ -234,7 +216,7 @@ def fit(learning_rate, weight_decay, num_epochs, model, optimizer, train_dataloa
         else:
             model_save_state = ""
 
-        if verbose and (epoch % 100 == 0 or model_save_state != ""):
+        if verbose and  model_save_state != "":
             # Print message
             print('\rEpoch {epoch:2d}: \t'
                         'Train Loss {train_loss:.6f} \t'
@@ -249,9 +231,7 @@ def fit(learning_rate, weight_decay, num_epochs, model, optimizer, train_dataloa
                             , end="")
 
         # Update learning rate with lr-scheduler
-        if lr_scheduler:
-            lr_scheduler.step()
-
+       
     return best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1
 
 
@@ -300,12 +280,14 @@ def base_model_objective(
     weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True)
     model=ModelBaseline()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
+
     # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
-    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(learning_rate=learning_rate, 
-                                                                                                     weight_decay=weight_decay, 
+    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
                                                                                                      num_epochs=num_epochs, 
                                                                                                      model=ModelBaseline(), 
                                                                                                      optimizer=optimizer,
+                                                                                                     lr_scheduler=lr_scheduler,
                                                                                                      train_dataloader=train_dataloader, 
                                                                                                      valid_dataloader=valid_dataloader,
                                                                                                      verbose=False, 
@@ -322,9 +304,51 @@ def model_objective(
     weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-2, log=True)
     beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
     beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+
+    kernel_size= trial.suggest_int("kernel_size", 3, 33, step=2)
+    steps = trial.suggest_int("steps", 0, 3)
+    dropout = trial.suggest_float("dropout", 0.0, 0.5)
+    num_layers = trial.suggest_int("num_layers", 1, 7)
+    lin_steps = trial.suggest_int("lin_steps", 0, 3)
+
+    model=Model(
+            kernel_size=kernel_size, 
+            num_layers=num_layers,
+            steps=steps, 
+            dropout=dropout, 
+            lin_steps=lin_steps, 
+        )
+    optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2))
+    
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
+
+
+    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
+        learning_rate=learning_rate, 
+        weight_decay=weight_decay, 
+        num_epochs=num_epochs, 
+        model=model, 
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        train_dataloader=train_dataloader, 
+        valid_dataloader=valid_dataloader,
+        verbose=False, 
+        device=device)
+    return best_loss, best_valid, best_auroc, best_accuracy, best_f1
+
+def model_v2_objective(
+        num_epochs,
+        train_dataloader,
+        valid_dataloader,
+        device,       
+        trial):
+    learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-2, log=True)
+    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
     esp = trial.suggest_float("esp", 1e-9, 1e-2, log=True)
 
-    kernel_size= trial.suggest_int("kernel_size", 3, 15, step=2)
+    kernel_size= trial.suggest_int("kernel_size", 3, 33, step=2)
     steps = trial.suggest_int("steps", 0, 3)
     dropout = trial.suggest_float("dropout", 0.0, 0.5)
 
@@ -350,14 +374,14 @@ def model_objective(
         )
     optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2), eps=esp)
     
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
 
 
     best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
-        learning_rate=learning_rate, 
-        weight_decay=weight_decay, 
         num_epochs=num_epochs, 
         model=model, 
         optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
         train_dataloader=train_dataloader, 
         valid_dataloader=valid_dataloader,
         verbose=False, 

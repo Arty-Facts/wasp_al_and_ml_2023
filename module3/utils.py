@@ -2,7 +2,7 @@ import optuna
 import torch
 import torch.nn as nn
 import numpy as np
-import h5py
+import h5py, os
 import pandas as pd
 import matplotlib.pyplot as plt
 import ipywidgets as widgets
@@ -62,6 +62,9 @@ class ModelBaseline(nn.Module):
     def __init__(self,):
         super(ModelBaseline, self).__init__()
         self.kernel_size = 3
+        self.kvargs = {
+            'name': 'baseline',
+        }
 
         # conv layer
         downsample = self._downsample(4096, 128)
@@ -147,7 +150,7 @@ def eval_loop(prefix, dataloader, model, loss_function, device):
 
     return total_loss / n_entries, np.vstack(valid_pred), np.vstack(valid_true)
 
-def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0"):
+def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -155,10 +158,18 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
 
     loss_function = torch.nn.BCELoss()
 
+    filename = f'model_best_{device.replace(":", "_")}.pth'
+
     # =============== Train model =============================================#
     if verbose:
         print("Training...")
     best_loss = np.Inf
+
+    best_global = None
+    if os.path.exists(filename):
+        ckpt = torch.load(filename)
+        best_global = ckpt['loss']
+
     # allocation
     train_loss_all, valid_loss_all, auroc_all = [], [], []
     accuracy_all, precision_all, recall_all, f1_all = [], [], [], []
@@ -175,7 +186,6 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
         train_loss = train_loop(prefix, train_dataloader, model, optimizer,lr_scheduler, loss_function, device)
         # validation loop
         valid_loss, y_pred, y_true = eval_loop(prefix, valid_dataloader, model, loss_function, device)
-
         # collect losses
         train_loss_all.append(train_loss)
         valid_loss_all.append(valid_loss)
@@ -198,7 +208,7 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
         curr_f1 = f1_all[-1]
         harmonic = 5 * (curr_auroc * curr_accuracy * curr_precision * curr_recall * curr_f1)/(curr_auroc + curr_accuracy + curr_precision + curr_recall + curr_f1 + 1e-6)
         curr_loss = curr_valid + (1-harmonic)
-    
+
         # save best model: here we save the model only for the lowest validation loss
         if curr_loss < best_loss:
             # Save model parameters
@@ -212,24 +222,20 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
             best_f1 = f1_all[-1]
             best_loss = curr_loss
             # statement
-            model_save_state = "Best model -> saved"
-        else:
-            model_save_state = ""
-
-        if verbose and  model_save_state != "":
-            # Print message
-            print('\rEpoch {epoch:2d}: \t'
-                        'Train Loss {train_loss:.6f} \t'
-                        'Valid Loss {valid_loss:.6f} \t'
-                        'Auroc {auroc:.6f} \t'
-                        '{model_save}'
-                        .format(epoch=epoch,
-                                train_loss=train_loss,
-                                valid_loss=valid_loss,
-                                auroc=auroc_all[-1],
-                                model_save=model_save_state)
-                            , end="")
-
+            # save model
+            if best_global is None or best_loss < best_global:
+                torch.save({'model': model.state_dict(), 
+                            "trial": trial,
+                            'kvargs': model.kvargs,
+                            'loss': best_loss, 
+                            'valid': best_valid, 
+                            'auroc': best_auroc, 
+                            'accuracy': best_accuracy, 
+                            'precision': best_precision, 
+                            'recall': best_recall, 
+                            'f1': best_f1}, 
+                            filename)
+                best_global = best_loss
         # Update learning rate with lr-scheduler
        
     return best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1
@@ -284,14 +290,16 @@ def base_model_objective(
 
     # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
     best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
-                                                                                                     num_epochs=num_epochs, 
-                                                                                                     model=ModelBaseline(), 
-                                                                                                     optimizer=optimizer,
-                                                                                                     lr_scheduler=lr_scheduler,
-                                                                                                     train_dataloader=train_dataloader, 
-                                                                                                     valid_dataloader=valid_dataloader,
-                                                                                                     verbose=False, 
-                                                                                                     device=device)
+        num_epochs=num_epochs, 
+        model=ModelBaseline(), 
+        optimizer=optimizer,
+        lr_scheduler=lr_scheduler,
+        train_dataloader=train_dataloader, 
+        valid_dataloader=valid_dataloader,
+        verbose=False, 
+        device=device, 
+        trial=trial.number
+                                                                                                     )
     return best_loss, best_valid, best_auroc, best_accuracy, best_f1
 
 def model_objective(
@@ -305,7 +313,7 @@ def model_objective(
     beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
     beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
 
-    kernel_size= trial.suggest_int("kernel_size", 3, 33, step=2)
+    kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
     steps = trial.suggest_int("steps", 0, 3)
     dropout = trial.suggest_float("dropout", 0.0, 0.5)
     num_layers = trial.suggest_int("num_layers", 1, 7)
@@ -324,8 +332,6 @@ def model_objective(
 
 
     best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
-        learning_rate=learning_rate, 
-        weight_decay=weight_decay, 
         num_epochs=num_epochs, 
         model=model, 
         optimizer=optimizer,
@@ -333,7 +339,9 @@ def model_objective(
         train_dataloader=train_dataloader, 
         valid_dataloader=valid_dataloader,
         verbose=False, 
-        device=device)
+        device=device,
+        trial=trial.number
+        )
     return best_loss, best_valid, best_auroc, best_accuracy, best_f1
 
 def model_v2_objective(
@@ -348,7 +356,7 @@ def model_v2_objective(
     beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
     esp = trial.suggest_float("esp", 1e-9, 1e-2, log=True)
 
-    kernel_size= trial.suggest_int("kernel_size", 3, 33, step=2)
+    kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
     steps = trial.suggest_int("steps", 0, 3)
     dropout = trial.suggest_float("dropout", 0.0, 0.5)
 
@@ -385,7 +393,9 @@ def model_v2_objective(
         train_dataloader=train_dataloader, 
         valid_dataloader=valid_dataloader,
         verbose=False, 
-        device=device)
+        device=device, 
+        trial=trial.number
+        )
     return best_loss, best_valid, best_auroc, best_accuracy, best_f1
 
 class Conv1Block(nn.Module):
@@ -423,8 +433,18 @@ class Conv1Block(nn.Module):
 class Model(nn.Module):
     def __init__(self, kernel_size=3, num_layers=5, steps=2, dropout=0.5, lin_steps=1):
         super().__init__()
+        self.kvargs = {
+            "name": "Model",
+            "kernel_size": kernel_size,
+            "num_layers": num_layers,
+            "steps": steps,
+            "dropout": dropout,
+            "lin_steps": lin_steps,
+        }
+        
         data_width = 4096
         in_channels = 8
+
 
         self.encoder = nn.Sequential(
             *[ Conv1Block(in_channels*(2**i), in_channels*(2**(i+1)), kernel_size, steps, stride=2) for i in range(num_layers)])
@@ -467,6 +487,18 @@ class Model_V2(nn.Module):
                  lin_dims=256, 
                  ):
         super().__init__()
+        self.kvargs = {
+            "name": "Model_V2",
+            "kernel_size": kernel_size,
+            "encode_layers": encode_layers,
+            "encoder_out_channels": encoder_out_channels,
+            "reduce_layers": reduce_layers,
+            "reduce_out_channels": reduce_out_channels,
+            "steps": steps,
+            "dropout": dropout,
+            "lin_steps": lin_steps,
+            "lin_dims": lin_dims,
+        }
         data_width = 4096
         in_channels = 8
         encoder_channels = np.linspace(in_channels, encoder_out_channels, encode_layers+1, dtype=int)

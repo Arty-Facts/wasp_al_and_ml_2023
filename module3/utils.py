@@ -304,8 +304,10 @@ def base_model_objective(
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-3, log=True)
-    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
-    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    # beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    # beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    beta_1 = 0.9
+    beta_2 = 0.999
     model=ModelBaseline()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2))
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
@@ -332,8 +334,10 @@ def model_objective(
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-2, log=True)
-    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
-    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    # beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    # beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    beta_1 = 0.9
+    beta_2 = 0.999
 
     kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
     steps = trial.suggest_int("steps", 0, 3)
@@ -375,8 +379,10 @@ def model_v2_objective(
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-3, log=True)
-    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
-    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    # beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    # beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    beta_1 = 0.9
+    beta_2 = 0.999
 
     kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
     steps = trial.suggest_int("steps", 0, 3)
@@ -429,8 +435,10 @@ def model_v3_objective(
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-3, log=True)
-    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
-    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    # beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    # beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+    beta_1 = 0.9
+    beta_2 = 0.999
 
     kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
     steps = trial.suggest_int("steps", 0, 3)

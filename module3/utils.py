@@ -19,6 +19,10 @@ import multiprocessing
 
 from pathlib import Path
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def to_labels(x, threshold=0.5):
     return (x > threshold).astype(np.float32)
 
@@ -62,8 +66,9 @@ class ModelBaseline(nn.Module):
     def __init__(self,):
         super(ModelBaseline, self).__init__()
         self.kernel_size = 3
+        self.name = 'Baseline'
         self.kvargs = {
-            'name': 'baseline',
+            'name': 'Baseline',
         }
 
         # conv layer
@@ -112,7 +117,7 @@ def train_loop(prefix, dataloader, model, optimizer, lr_scheduler, loss_function
 
         optimizer.zero_grad()  # set gradients to zero
         output = model(traces) # forward pass
-        loss = loss_function(nn.functional.sigmoid(output), diagnoses) # compute loss
+        loss = loss_function(output, diagnoses) # compute loss
         loss.backward() # compute gradients
         optimizer.step() # update parameters
         if lr_scheduler:
@@ -139,10 +144,15 @@ def eval_loop(prefix, dataloader, model, loss_function, device):
 
         with torch.no_grad(): # no gradients needed
             output = model(traces) # forward pass
-        pred = torch.sigmoid(output) # apply sigmoid to get probabilities
+
+        if output.shape[1] > 1:
+            pred = torch.sigmoid(output[:,0]).unsqueeze(1)
+            diagnoses_cpu = diagnoses_cpu[:,0].unsqueeze(1)
+        else:
+            pred = torch.sigmoid(output)
         valid_pred.append(pred.cpu().numpy())
         valid_true.append(diagnoses_cpu.numpy())
-        loss = loss_function(nn.functional.sigmoid(output), diagnoses) # compute loss
+        loss = loss_function(output, diagnoses) # compute loss
         
         # Update accumulated values
         total_loss += loss.detach().cpu().numpy()
@@ -150,25 +160,27 @@ def eval_loop(prefix, dataloader, model, loss_function, device):
 
     return total_loss / n_entries, np.vstack(valid_pred), np.vstack(valid_true)
 
-def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1):
+def binary_cross_entropy(output, target):
+    return torch.nn.functional.binary_cross_entropy(torch.sigmoid(output), target, reduction='mean')
+
+
+def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, loss_function=binary_cross_entropy, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     model.to(device=device)
 
-    loss_function = torch.nn.BCELoss()
-
-    filename = f'model_best_{device.replace(":", "_")}.pth'
+    filename = f'{model.name}_{device.replace(":", "_")}.pth'
 
     # =============== Train model =============================================#
     if verbose:
         print("Training...")
-    best_loss = np.Inf
+    best_score = np.Inf
 
     best_global = None
     if os.path.exists(filename):
         ckpt = torch.load(filename)
-        best_global = ckpt['loss']
+        best_global = ckpt['score']
 
     # allocation
     train_loss_all, valid_loss_all, auroc_all = [], [], []
@@ -190,6 +202,13 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
         train_loss_all.append(train_loss)
         valid_loss_all.append(valid_loss)
 
+        # if v3 then the labels are different select only the first column
+
+        if y_pred.shape[1] > 1:
+            y_pred = y_pred[:, 0]
+        if y_true.shape[1] > 1:
+            y_true = y_true[:, 0]
+
         # compute validation metrics for performance evaluation
         """
         TASK: compute validation metrics (e.g. AUROC); Insert your code here
@@ -210,7 +229,7 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
         curr_loss = curr_valid + (1-harmonic)
 
         # save best model: here we save the model only for the lowest validation loss
-        if curr_loss < best_loss:
+        if curr_loss < best_score:
             # Save model parameters
             # torch.save({'model': model.state_dict()}, 'model.pth') 
             # Update best validation loss
@@ -220,14 +239,15 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
             best_precision = precision_all[-1]
             best_recall = recall_all[-1]
             best_f1 = f1_all[-1]
-            best_loss = curr_loss
+            best_score = curr_loss
             # statement
             # save model
-            if best_global is None or best_loss < best_global:
+            if best_global is None or best_score < best_global:
                 torch.save({'model': model.state_dict(), 
                             "trial": trial,
                             'kvargs': model.kvargs,
-                            'loss': best_loss, 
+                            'num_epochs': num_epochs,
+                            'score': best_score, 
                             'valid': best_valid, 
                             'auroc': best_auroc, 
                             'accuracy': best_accuracy, 
@@ -235,10 +255,10 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, lr_sch
                             'recall': best_recall, 
                             'f1': best_f1}, 
                             filename)
-                best_global = best_loss
+                best_global = best_score
         # Update learning rate with lr-scheduler
        
-    return best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1
+    return best_score, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1
 
 
 def ask_tell_optuna(objective_func, study_name, storage_name):
@@ -282,14 +302,16 @@ def base_model_objective(
         valid_dataloader,
         device,       
         trial):
-    learning_rate = trial.suggest_float("learning_rate", 1e-8, 1e-2, log=True)
-    weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-2, log=True)
+    learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-3, log=True)
+    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
     model=ModelBaseline()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2))
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
 
     # print(f"Learning Rate {learning_rate}, Weight Decay {weight_decay}")
-    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
+    best_score, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
         num_epochs=num_epochs, 
         model=ModelBaseline(), 
         optimizer=optimizer,
@@ -300,7 +322,7 @@ def base_model_objective(
         device=device, 
         trial=trial.number
                                                                                                      )
-    return best_loss, best_valid, best_auroc, best_accuracy, best_f1
+    return best_score, best_valid, best_auroc, best_accuracy, best_f1
 
 def model_objective(
         num_epochs,
@@ -331,7 +353,7 @@ def model_objective(
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
 
 
-    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
+    best_score, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
         num_epochs=num_epochs, 
         model=model, 
         optimizer=optimizer,
@@ -342,7 +364,8 @@ def model_objective(
         device=device,
         trial=trial.number
         )
-    return best_loss, best_valid, best_auroc, best_accuracy, best_f1
+    p_count = count_parameters(model)
+    return best_score, best_valid, best_auroc, best_accuracy, best_f1, p_count
 
 def model_v2_objective(
         num_epochs,
@@ -350,21 +373,20 @@ def model_v2_objective(
         valid_dataloader,
         device,       
         trial):
-    learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
-    weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-2, log=True)
+    learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-3, log=True)
     beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
     beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
-    esp = trial.suggest_float("esp", 1e-9, 1e-2, log=True)
 
     kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
     steps = trial.suggest_int("steps", 0, 3)
     dropout = trial.suggest_float("dropout", 0.0, 0.5)
 
-    encode_layers = trial.suggest_int("encode_layers", 1, 7)
+    encode_layers = trial.suggest_int("encode_layers", 1, 9)
     encoder_out_channels = trial.suggest_int("encoder_out_channels", 32, 1024, step=32)
 
     reduce_layers = trial.suggest_int("reduce_layers", 1, 7)
-    reduce_out_channels = trial.suggest_int("reduce_out_channels", 1, 16, step=1)
+    reduce_out_channels = trial.suggest_int("reduce_out_channels", 1, 32, step=1)
 
     lin_dims = trial.suggest_int("lin_dims", 32, 512, step=32)
     lin_steps = trial.suggest_int("lin_steps", 0, 3)
@@ -380,12 +402,12 @@ def model_v2_objective(
             lin_steps=lin_steps, 
             lin_dims=lin_dims,
         )
-    optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2), eps=esp)
+    optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2))
     
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
 
 
-    best_loss, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
+    best_score, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
         num_epochs=num_epochs, 
         model=model, 
         optimizer=optimizer,
@@ -396,7 +418,68 @@ def model_v2_objective(
         device=device, 
         trial=trial.number
         )
-    return best_loss, best_valid, best_auroc, best_accuracy, best_f1
+    p_count = count_parameters(model)
+    return best_score, best_valid, best_auroc, best_accuracy, best_f1, p_count
+
+def model_v3_objective(
+        num_epochs,
+        train_dataloader,
+        valid_dataloader,
+        device,       
+        trial):
+    learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-9, 1e-3, log=True)
+    beta_1 = trial.suggest_float("beta_1", 0.0, 1.0)
+    beta_2 = trial.suggest_float("beta_2", 0.0, 1.0)
+
+    kernel_size= trial.suggest_int("kernel_size", 3, 65, step=2)
+    steps = trial.suggest_int("steps", 0, 3)
+    dropout = trial.suggest_float("dropout", 0.0, 0.5)
+
+    encode_layers = trial.suggest_int("encode_layers", 1, 9)
+    encoder_out_channels = trial.suggest_int("encoder_out_channels", 32, 1024, step=32)
+
+    reduce_layers = trial.suggest_int("reduce_layers", 1, 7)
+    reduce_out_channels = trial.suggest_int("reduce_out_channels", 1, 32, step=1)
+
+    lin_dims = trial.suggest_int("lin_dims", 32, 512, step=32)
+    lin_steps = trial.suggest_int("lin_steps", 0, 3)
+
+    model=Model_V3(
+            kernel_size=kernel_size, 
+            encode_layers=encode_layers,
+            encoder_out_channels=encoder_out_channels,
+            reduce_layers=reduce_layers,
+            reduce_out_channels=reduce_out_channels,
+            steps=steps, 
+            dropout=dropout, 
+            lin_steps=lin_steps, 
+            lin_dims=lin_dims,
+        )
+    optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(beta_1, beta_2))
+    
+    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader), epochs=num_epochs)
+    def thee_ways_loss(output, target):
+        loss_af = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output[:, 0]), target[:, 0], reduction='mean')
+        loss_sex = torch.nn.functional.binary_cross_entropy(torch.sigmoid(output[:, 1]), target[:, 1],  reduction='mean')
+        loss_age = torch.nn.functional.mse_loss(output[:, 2], target[:, 2], reduction='mean')
+        return loss_af + loss_sex + loss_age
+
+
+    best_score, best_valid, best_auroc, best_accuracy, best_precision, best_recall, best_f1 = fit(
+        num_epochs=num_epochs, 
+        model=model, 
+        optimizer=optimizer,
+        loss_function=thee_ways_loss,
+        lr_scheduler=lr_scheduler,
+        train_dataloader=train_dataloader, 
+        valid_dataloader=valid_dataloader,
+        verbose=False, 
+        device=device, 
+        trial=trial.number
+        )
+    p_count = count_parameters(model)
+    return best_score, best_valid, best_auroc, best_accuracy, best_f1, p_count
 
 class Conv1Block(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, steps=2, stride=1):
@@ -433,6 +516,7 @@ class Conv1Block(nn.Module):
 class Model(nn.Module):
     def __init__(self, kernel_size=3, num_layers=5, steps=2, dropout=0.5, lin_steps=1):
         super().__init__()
+        self.name = "Model"
         self.kvargs = {
             "name": "Model",
             "kernel_size": kernel_size,
@@ -487,6 +571,7 @@ class Model_V2(nn.Module):
                  lin_dims=256, 
                  ):
         super().__init__()
+        self.name = "Model_V2"
         self.kvargs = {
             "name": "Model_V2",
             "kernel_size": kernel_size,
@@ -514,7 +599,6 @@ class Model_V2(nn.Module):
         self.lin = nn.Sequential(
             nn.Linear(in_features=out_channels,
                                 out_features=lin_dims),
-            nn.Dropout(dropout),
             nn.ReLU(),
             *[nn.Sequential(
                 nn.Linear(in_features=lin_dims,
@@ -535,3 +619,64 @@ class Model_V2(nn.Module):
         x = self.lin(x_flat)
         return x
     
+
+class Model_V3(nn.Module):
+    def __init__(self, 
+                 kernel_size=3, 
+                 encode_layers=3,
+                 encoder_out_channels=256,
+                 reduce_layers=3,
+                 reduce_out_channels=4,
+                 steps=1, 
+                 dropout=0.5, 
+                 lin_steps=1, 
+                 lin_dims=256, 
+                 ):
+        super().__init__()
+        self.name = "Model_V3"
+        self.kvargs = {
+            "name": "Model_V3",
+            "kernel_size": kernel_size,
+            "encode_layers": encode_layers,
+            "encoder_out_channels": encoder_out_channels,
+            "reduce_layers": reduce_layers,
+            "reduce_out_channels": reduce_out_channels,
+            "steps": steps,
+            "dropout": dropout,
+            "lin_steps": lin_steps,
+            "lin_dims": lin_dims,
+        }
+        data_width = 4096
+        in_channels = 8
+        encoder_channels = np.linspace(in_channels, encoder_out_channels, encode_layers+1, dtype=int)
+        self.encoder = nn.Sequential(
+            *[ Conv1Block(in_c, out_c, kernel_size, steps, stride=2) for in_c, out_c in zip(encoder_channels[:-1], encoder_channels[1:])])
+        
+        reducer_channels = np.linspace(encoder_out_channels, reduce_out_channels, reduce_layers+1, dtype=int)
+        self.reducer = nn.Sequential(
+            *[ Conv1Block(in_c, out_c, kernel_size, steps,  stride=1) for in_c, out_c in zip(reducer_channels[:-1], reducer_channels[1:])]
+            )
+        # linear layer
+        out_channels = reduce_out_channels*data_width//(2**(encode_layers))
+        self.lin = nn.Sequential(
+            nn.Linear(in_features=out_channels,
+                                out_features=lin_dims),
+            nn.ReLU(),
+            *[nn.Sequential(
+                nn.Linear(in_features=lin_dims,
+                                out_features=lin_dims), 
+                nn.Dropout(dropout), 
+                nn.ReLU()
+            ) for _ in range(lin_steps)],
+            nn.Linear(in_features=lin_dims,
+                                out_features=3), # 3 classes [af, sex, age]
+        )
+        
+
+    def forward(self, x):
+        x= x.transpose(2,1)
+        x = self.encoder(x)
+        x = self.reducer(x)
+        x_flat= x.view(x.size(0), -1)
+        x = self.lin(x_flat)
+        return x

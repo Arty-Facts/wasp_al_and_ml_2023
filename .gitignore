@@ -11,4 +11,5 @@ module3/prediction*.json
 module3/checkpoints/optuna.db
 module3/checkpoints/.nfs*
 module3/*.pth
-module3/checkpoints/optuna_v2.db
+saved_models/
+module3/checkpoints/*.db

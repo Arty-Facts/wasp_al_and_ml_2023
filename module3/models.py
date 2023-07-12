@@ -10,6 +10,7 @@ class Baseline(nn.Module):
         self.kvargs = {
             'name': self.name,
             'training_args': training_args,
+            "out_features": out_features
         }
         self.out_features = out_features
 
@@ -190,7 +191,7 @@ class Model_V2(nn.Module):
                 nn.ReLU()
             ) for _ in range(lin_steps)],
             nn.Linear(in_features=lin_dims,
-                                out_features=1),
+                                out_features=out_features),
         )
         
 

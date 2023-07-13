@@ -13,3 +13,4 @@ module3/checkpoints/.nfs*
 module3/*.pth
 saved_models/
 module3/checkpoints/*.db
+saved_models_balanced/

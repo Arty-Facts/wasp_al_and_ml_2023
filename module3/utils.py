@@ -72,6 +72,7 @@ class Baseline(nn.Module):
         self.kvargs = {
             'name': self.name,
             'training_args': training_args,
+            'out_features': out_features
         }
         self.out_features = out_features
 
@@ -168,15 +169,15 @@ def binary_cross_entropy(output, target):
     return torch.nn.functional.binary_cross_entropy(torch.sigmoid(output), target, reduction='mean')
 
 
-def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, loss_function=binary_cross_entropy, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1):
+def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, loss_function=binary_cross_entropy, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1, prefix=""):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     model.to(device=device)
 
-    if not Path('saved_models').exists():
-        Path('saved_models').mkdir()
-    filename = f'saved_models/{model.name}_{device.replace(":", "_")}.pth'
+    if not Path(f'saved_models{prefix}').exists():
+        Path(f'saved_models{prefix}').mkdir()
+    filename = f'saved_models{prefix}/{model.name}_{device.replace(":", "_")}.pth'
 
     # =============== Train model =============================================#
     if verbose:
@@ -307,6 +308,7 @@ def base_model_objective(
         train_dataloader,
         valid_dataloader,
         out_features, 
+        prefix,
         device,       
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
@@ -329,8 +331,6 @@ def base_model_objective(
             "batch_size": train_dataloader[out_features].batch_size,
             "num_epochs": num_epochs,
         }
-
-
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_dataloader[model.out_features]), epochs=num_epochs)
@@ -345,7 +345,8 @@ def base_model_objective(
         valid_dataloader=valid_dataloader[model.out_features],
         verbose=False, 
         device=device, 
-        trial=trial.number
+        trial=trial.number,
+        prefix=prefix
         )
     return best_score, best_valid, best_auroc, best_accuracy, best_f1
 
@@ -354,6 +355,7 @@ def model_objective(
         train_dataloader,
         valid_dataloader,
         out_features, 
+        prefix,
         device,       
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
@@ -403,16 +405,18 @@ def model_objective(
         valid_dataloader=valid_dataloader[model.out_features],
         verbose=False, 
         device=device,
-        trial=trial.number
+        trial=trial.number,
+        prefix=prefix
         )
     p_count = count_parameters(model)
-    return best_score, best_valid, best_auroc, best_accuracy, best_f1, p_count
+    return best_score, best_valid, best_auroc, best_accuracy, best_f1
 
 def model_v2_objective(
         num_epochs,
         train_dataloader,
         valid_dataloader,
         out_features,
+        prefix,
         device,       
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
@@ -472,10 +476,11 @@ def model_v2_objective(
         valid_dataloader=valid_dataloader[model.out_features],
         verbose=False, 
         device=device, 
-        trial=trial.number
+        trial=trial.number,
+        prefix=prefix
         )
     p_count = count_parameters(model)
-    return best_score, best_valid, best_auroc, best_accuracy, best_f1, p_count
+    return best_score, best_valid, best_auroc, best_accuracy, best_f1
 
 
 

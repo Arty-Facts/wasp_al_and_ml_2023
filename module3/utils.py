@@ -20,6 +20,17 @@ import multiprocessing
 from pathlib import Path
 
 from models import Baseline, Model, Model_V2
+import random
+
+def set_seed(seed: int = 42) -> None:
+    """Set the random seed for reproducibility"""
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+
+    # Set a fixed value for the hash seed
+    os.environ["PYTHONHASHSEED"] = str(seed)
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -109,7 +120,7 @@ class Baseline(nn.Module):
         return x
 
 
-def train_loop(prefix, dataloader, model, optimizer, lr_scheduler, loss_function, device):
+def train_loop(dataloader, model, optimizer, lr_scheduler, loss_function, device):
     # model to training mode (important to correctly handle dropout or batchnorm layers)
     model.train()
     # allocation
@@ -135,7 +146,7 @@ def train_loop(prefix, dataloader, model, optimizer, lr_scheduler, loss_function
 
     return total_loss / n_entries
 
-def eval_loop(prefix, dataloader, model, loss_function, device):
+def eval_loop(dataloader, model, loss_function, device):
     # model to evaluation mode (important to correctly handle dropout or batchnorm layers)
     model.eval()
     # allocation
@@ -169,15 +180,14 @@ def binary_cross_entropy(output, target):
     return torch.nn.functional.binary_cross_entropy(torch.sigmoid(output), target, reduction='mean')
 
 
-def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, loss_function=binary_cross_entropy, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1, prefix=""):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, loss_function=binary_cross_entropy, lr_scheduler=None ,seed=42, verbose=True, device="cuda:0", trial=-1, data_blend=""):
+    set_seed(seed)
 
     model.to(device=device)
 
-    if not Path(f'saved_models{prefix}').exists():
-        Path(f'saved_models{prefix}').mkdir()
-    filename = f'saved_models{prefix}/{model.name}_{device.replace(":", "_")}.pth'
+    if not Path(f'saved_models{data_blend}').exists():
+        Path(f'saved_models{data_blend}').mkdir()
+    filename = f'saved_models{data_blend}/{model.name}_{device.replace(":", "_")}.pth'
 
     # =============== Train model =============================================#
     if verbose:
@@ -198,13 +208,13 @@ def fit(num_epochs, model, optimizer, train_dataloader, valid_dataloader, loss_f
         pbar = range(1, num_epochs + 1)
     # loop over epochs
     for epoch in pbar:
-        # update progress bar set prefix f"epoch {epoch}/{num_epochs}"
-        prefix = f""
+        # update progress bar set data_blend f"epoch {epoch}/{num_epochs}"
+        data_blend = f""
         
         # training loop
-        train_loss = train_loop(prefix, train_dataloader, model, optimizer,lr_scheduler, loss_function, device)
+        train_loss = train_loop(train_dataloader, model, optimizer,lr_scheduler, loss_function, device)
         # validation loop
-        valid_loss, y_pred, y_true = eval_loop(prefix, valid_dataloader, model, loss_function, device)
+        valid_loss, y_pred, y_true = eval_loop(valid_dataloader, model, loss_function, device)
         # collect losses
         train_loss_all.append(train_loss)
         valid_loss_all.append(valid_loss)
@@ -308,7 +318,7 @@ def base_model_objective(
         train_dataloader,
         valid_dataloader,
         out_features, 
-        prefix,
+        data_blend,
         device,       
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
@@ -346,7 +356,7 @@ def base_model_objective(
         verbose=False, 
         device=device, 
         trial=trial.number,
-        prefix=prefix
+        data_blend=data_blend
         )
     return best_score, best_valid, best_auroc, best_accuracy, best_f1
 
@@ -355,7 +365,7 @@ def model_objective(
         train_dataloader,
         valid_dataloader,
         out_features, 
-        prefix,
+        data_blend,
         device,       
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-2, log=True)
@@ -406,7 +416,7 @@ def model_objective(
         verbose=False, 
         device=device,
         trial=trial.number,
-        prefix=prefix
+        data_blend=data_blend
         )
     p_count = count_parameters(model)
     return best_score, best_valid, best_auroc, best_accuracy, best_f1
@@ -416,7 +426,7 @@ def model_v2_objective(
         train_dataloader,
         valid_dataloader,
         out_features,
-        prefix,
+        data_blend,
         device,       
         trial):
     learning_rate = trial.suggest_float("learning_rate", 1e-9, 1e-3, log=True)
@@ -477,7 +487,7 @@ def model_v2_objective(
         verbose=False, 
         device=device, 
         trial=trial.number,
-        prefix=prefix
+        data_blend=data_blend
         )
     p_count = count_parameters(model)
     return best_score, best_valid, best_auroc, best_accuracy, best_f1

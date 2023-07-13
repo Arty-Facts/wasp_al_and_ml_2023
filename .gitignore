@@ -6,11 +6,9 @@ __pycache__
 module3/codesubset
 module3/ecg_preprocessing
 module3/codesubset.tar.gz
-module3/model.pth
 module3/prediction*.json
 module3/checkpoints/optuna.db
 module3/checkpoints/.nfs*
 module3/*.pth
-saved_models/
 module3/checkpoints/*.db
-saved_models_balanced/
+*.pth

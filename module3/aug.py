@@ -6,7 +6,7 @@ import numpy as np
 class AugmentIntensity:
     """Normalize the image in a sample.
     """
-    def __init__(self, augment_intensity=(0.9, 1.1)):
+    def __init__(self, augment_intensity=(0.8, 1.2)):
         self.augment_intensity = augment_intensity
 
     def __call__(self, sample):
@@ -41,6 +41,19 @@ class AugmentShiftData:
         # shift all values in the tensor with values between min_shift and max_shift
         tensor = torch.roll(tensor, shifts=int(np.random.uniform(min_shift, max_shift) * tensor.shape[0]), dims=0)
         return tensor, label
+    
+class AugmentScaleData:
+
+    def __init__(self, augment_scale=(0.8, 1.2)):
+        self.augment_scale = augment_scale
+
+    def __call__(self, sample):
+        min_scale, max_scale = self.augment_scale
+        tensor, label = sample
+        # scale all values in the tensor with values between min_scale and max_scale
+        tensor = tensor * np.random.uniform(min_scale, max_scale)
+        return tensor, label
+    
     
 class Identity:
     def __call__(self, sample):
